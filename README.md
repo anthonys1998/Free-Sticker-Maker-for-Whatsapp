@@ -8,5 +8,5 @@
 4. Copy to your phone and install (allow "install unknown apps").
 
 ## Use
-Select images (multi-select) → name the pack → Add to WhatsApp.
+Create multiple packs → select many images at once → Add to WhatsApp.
 Needs 3–30 stickers. Images are auto-converted to 512x512 WebP (<100 KB).

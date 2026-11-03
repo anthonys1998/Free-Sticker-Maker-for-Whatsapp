@@ -17,7 +17,7 @@ class StickerContentProvider : ContentProvider() {
     private lateinit var authority: String
 
     override fun onCreate(): Boolean {
-        authority = context!!.packageName + ".stickercontentprovider"
+        authority = StickerStore.authority(context!!)
         matcher.addURI(authority, "metadata", METADATA)
         matcher.addURI(authority, "metadata/*", METADATA_ONE)
         matcher.addURI(authority, "stickers/*", STICKERS)
@@ -37,18 +37,26 @@ class StickerContentProvider : ContentProvider() {
                     "sticker_pack_privacy_policy_website", "sticker_pack_license_agreement_website",
                     "image_data_version", "whatsapp_will_not_cache_stickers", "animated_sticker_pack"
                 ))
-                c.addRow(arrayOf<Any>(
-                    StickerStore.PACK_ID, StickerStore.name(ctx), "Sticker Maker",
-                    StickerStore.TRAY, "", "", "", "", "", "",
-                    StickerStore.version(ctx), 0, 0
-                ))
-                c.setNotificationUri(ctx.contentResolver, uri)
+                val only = if (matcher.match(uri) == METADATA_ONE) uri.lastPathSegment else null
+                StickerStore.packIds(ctx)
+                    .filter { only == null || it == only }
+                    // WhatsApp rejects packs below its minimum, so only expose valid ones
+                    .filter { StickerStore.stickers(ctx, it).size >= StickerStore.MIN }
+                    .forEach { id ->
+                        c.addRow(arrayOf<Any>(
+                            id, StickerStore.name(ctx, id), "Sticker Maker",
+                            StickerStore.TRAY, "", "", "", "", "", "",
+                            StickerStore.version(ctx, id), 0, 0
+                        ))
+                    }
                 c
             }
             STICKERS -> {
+                val id = uri.lastPathSegment ?: return null
                 val c = MatrixCursor(arrayOf("sticker_file_name", "sticker_emoji", "sticker_accessibility_text"))
-                StickerStore.stickers(ctx).forEach { c.addRow(arrayOf<Any>(it.name, "😀", "Sticker")) }
-                c.setNotificationUri(ctx.contentResolver, uri)
+                if (id in StickerStore.packIds(ctx)) {
+                    StickerStore.stickers(ctx, id).forEach { c.addRow(arrayOf<Any>(it.name, "😀", "Sticker")) }
+                }
                 c
             }
             else -> throw IllegalArgumentException("Unknown URI: $uri")
@@ -57,8 +65,10 @@ class StickerContentProvider : ContentProvider() {
 
     override fun openAssetFile(uri: Uri, mode: String): AssetFileDescriptor? {
         if (matcher.match(uri) != ASSET) return null
+        val id = uri.pathSegments[1]
+        if (id !in StickerStore.packIds(context!!)) throw FileNotFoundException(id)
         val fileName = File(uri.pathSegments[2]).name // strip any path tricks
-        val f = File(StickerStore.dir(context!!), fileName)
+        val f = File(StickerStore.packDir(context!!, id), fileName)
         if (!f.exists()) throw FileNotFoundException(fileName)
         return AssetFileDescriptor(
             ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY), 0, AssetFileDescriptor.UNKNOWN_LENGTH

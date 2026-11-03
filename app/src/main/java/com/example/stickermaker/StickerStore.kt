@@ -13,34 +13,57 @@ import java.io.File
 import java.io.FileOutputStream
 
 object StickerStore {
-    const val PACK_ID = "my_sticker_pack"
     const val TRAY = "tray.png"
-    const val MAX = 30
-    const val MIN = 3
-    private const val PREFS = "pack"
+    const val MAX = 30   // WhatsApp limit per pack
+    const val MIN = 3    // WhatsApp refuses packs with fewer than 3 stickers
 
-    private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private fun prefs(ctx: Context) = ctx.getSharedPreferences("packs", Context.MODE_PRIVATE)
 
-    fun dir(ctx: Context): File = File(ctx.filesDir, "pack").also { it.mkdirs() }
+    fun authority(ctx: Context) = ctx.packageName + ".stickercontentprovider"
 
-    fun stickers(ctx: Context): List<File> =
-        dir(ctx).listFiles { f -> f.name.startsWith("s_") && f.name.endsWith(".webp") }
+    // ---- packs ----
+    fun packIds(ctx: Context): List<String> =
+        (prefs(ctx).getString("ids", "") ?: "").split(",").filter { it.isNotBlank() }
+
+    fun createPack(ctx: Context, name: String): String {
+        val id = "pack_" + System.currentTimeMillis()
+        prefs(ctx).edit()
+            .putString("ids", (packIds(ctx) + id).joinToString(","))
+            .putString("name_$id", name)
+            .putInt("ver_$id", 1)
+            .apply()
+        packDir(ctx, id)
+        return id
+    }
+
+    fun deletePack(ctx: Context, id: String) {
+        packDir(ctx, id).deleteRecursively()
+        prefs(ctx).edit()
+            .putString("ids", packIds(ctx).filter { it != id }.joinToString(","))
+            .remove("name_$id").remove("ver_$id").apply()
+    }
+
+    fun packDir(ctx: Context, id: String): File = File(ctx.filesDir, "packs/$id").also { it.mkdirs() }
+
+    fun name(ctx: Context, id: String): String = prefs(ctx).getString("name_$id", "My Stickers") ?: "My Stickers"
+    fun setName(ctx: Context, id: String, n: String) {
+        if (n != name(ctx, id)) { prefs(ctx).edit().putString("name_$id", n).apply(); bump(ctx, id) }
+    }
+
+    fun version(ctx: Context, id: String): String = prefs(ctx).getInt("ver_$id", 1).toString()
+    private fun bump(ctx: Context, id: String) {
+        prefs(ctx).edit().putInt("ver_$id", prefs(ctx).getInt("ver_$id", 1) + 1).apply()
+    }
+
+    // ---- stickers ----
+    fun stickers(ctx: Context, id: String): List<File> =
+        packDir(ctx, id).listFiles { f -> f.name.startsWith("s_") && f.name.endsWith(".webp") }
             ?.sortedBy { it.name } ?: emptyList()
 
-    fun name(ctx: Context): String = prefs(ctx).getString("name", "My Stickers") ?: "My Stickers"
-    fun setName(ctx: Context, n: String) {
-        if (n != name(ctx)) { prefs(ctx).edit().putString("name", n).apply(); bump(ctx) }
-    }
-
-    fun version(ctx: Context): String = prefs(ctx).getInt("version", 1).toString()
-    private fun bump(ctx: Context) {
-        prefs(ctx).edit().putInt("version", prefs(ctx).getInt("version", 1) + 1).apply()
-    }
-
-    fun remove(ctx: Context, f: File) { f.delete(); bump(ctx); updateTray(ctx) }
+    fun remove(ctx: Context, id: String, f: File) { f.delete(); bump(ctx, id); updateTray(ctx, id) }
 
     /** Converts any image into a 512x512 transparent-padded WebP under 100 KB. */
-    fun addImage(ctx: Context, uri: Uri, index: Int): Boolean {
+    fun addImage(ctx: Context, id: String, uri: Uri, index: Int): Boolean {
         return try {
             val bmp = decode(ctx, uri) ?: return false
             val s = 512f / maxOf(bmp.width, bmp.height)
@@ -49,9 +72,9 @@ object StickerStore {
             val scaled = Bitmap.createScaledBitmap(bmp, w, h, true)
             val out = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
             Canvas(out).drawBitmap(scaled, (512 - w) / 2f, (512 - h) / 2f, null)
-            val name = "s_%013d_%03d.webp".format(System.currentTimeMillis(), index)
-            File(dir(ctx), name).writeBytes(encode(out))
-            bump(ctx)
+            val fileName = "s_%013d_%03d.webp".format(System.currentTimeMillis(), index)
+            File(packDir(ctx, id), fileName).writeBytes(encode(out))
+            bump(ctx, id)
             true
         } catch (e: Exception) { false }
     }
@@ -95,10 +118,10 @@ object StickerStore {
     }
 
     /** WhatsApp requires a 96x96 PNG tray icon (<50 KB). Uses the first sticker. */
-    fun updateTray(ctx: Context) {
-        val first = stickers(ctx).firstOrNull() ?: return
+    fun updateTray(ctx: Context, id: String) {
+        val first = stickers(ctx, id).firstOrNull() ?: return
         val b = BitmapFactory.decodeFile(first.path) ?: return
         val t = Bitmap.createScaledBitmap(b, 96, 96, true)
-        FileOutputStream(File(dir(ctx), TRAY)).use { t.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        FileOutputStream(File(packDir(ctx, id), TRAY)).use { t.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 }
