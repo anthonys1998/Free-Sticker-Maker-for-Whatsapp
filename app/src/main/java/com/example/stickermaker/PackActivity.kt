@@ -63,7 +63,7 @@ class PackActivity : ComponentActivity() {
 
         nameEdit = EditText(this).apply {
             hint = "Pack name"; setSingleLine(); textSize = 17f
-            setText(StickerStore.name(this@PackActivity, id))
+            setText(StickerStore.name(this@PackActivity, this@PackActivity.id))
             background = Ui.round(Color.WHITE, d(12).toFloat())
             setPadding(d(16), d(14), d(16), d(14))
         }
